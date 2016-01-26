@@ -12360,6 +12360,9 @@ function init(api, opts, callback) {
     idbBulkDocs(opts, req, reqOpts, api, idb, IdbPouch.Changes, callback);
   };
 
+  api.___ddoc = undefined;
+  api.___ddocmeta = undefined;
+
   // First we look up the metadata in the ids database, then we fetch the
   // current revision(s) from the by sequence store
   api._get = function idb_get(id, opts, callback) {
@@ -12380,38 +12383,49 @@ function init(api, opts, callback) {
       callback(err, {doc: doc, metadata: metadata, ctx: txn});
     }
 
-    txn.objectStore(DOC_STORE).get(id).onsuccess = function (e) {
-      metadata = decodeMetadata(e.target.result);
-      // we can determine the result here if:
-      // 1. there is no such document
-      // 2. the document is deleted and we don't ask about specific rev
-      // When we ask with opts.rev we expect the answer to be either
-      // doc (possibly with _deleted=true) or missing error
-      if (!metadata) {
-        err = createError(MISSING_DOC, 'missing');
-        return finish();
-      }
-      if (isDeleted(metadata) && !opts.rev) {
-        err = createError(MISSING_DOC, "deleted");
-        return finish();
-      }
-      var objectStore = txn.objectStore(BY_SEQ_STORE);
+    if (id === '_design/medic' && api.___ddoc) {
+      metadata = api.___ddocmeta;
+      doc = api.___ddoc;
 
-      var rev = opts.rev || metadata.winningRev;
-      var key = metadata.id + '::' + rev;
-
-      objectStore.index('_doc_id_rev').get(key).onsuccess = function (e) {
-        doc = e.target.result;
-        if (doc) {
-          doc = decodeDoc(doc);
-        }
-        if (!doc) {
+      finish();
+    } else {
+      txn.objectStore(DOC_STORE).get(id).onsuccess = function (e) {
+        metadata = decodeMetadata(e.target.result);
+        // we can determine the result here if:
+        // 1. there is no such document
+        // 2. the document is deleted and we don't ask about specific rev
+        // When we ask with opts.rev we expect the answer to be either
+        // doc (possibly with _deleted=true) or missing error
+        if (!metadata) {
           err = createError(MISSING_DOC, 'missing');
           return finish();
         }
-        finish();
+        if (isDeleted(metadata) && !opts.rev) {
+          err = createError(MISSING_DOC, "deleted");
+          return finish();
+        }
+        var objectStore = txn.objectStore(BY_SEQ_STORE);
+
+        var rev = opts.rev || metadata.winningRev;
+        var key = metadata.id + '::' + rev;
+
+        objectStore.index('_doc_id_rev').get(key).onsuccess = function (e) {
+          doc = e.target.result;
+          if (doc) {
+            doc = decodeDoc(doc);
+            if (id === '_design/medic') {
+              api.___ddocmeta = metadata;
+              api.___ddoc = doc;
+            }
+          }
+          if (!doc) {
+            err = createError(MISSING_DOC, 'missing');
+            return finish();
+          }
+          finish();
+        };
       };
-    };
+    }
   };
 
   api._getAttachment = function (attachment, opts, callback) {
